@@ -1,0 +1,37 @@
+.stApp {
+    background-image: url("app/static/fondo_estelar.png");
+    background-size: cover;
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 20px;
+    padding: 20px;
+    border: 20px solid transparent;
+    border-image: url("app/static/borde_marco.png") 30 round;
+    background: rgba(26, 11, 46, 0.8);
+}
+
+.aria-panel { 
+    border: 2px solid #bf00ff; 
+    border-radius: 15px; 
+    padding: 15px; 
+    background: rgba(26, 11, 46, 0.8); 
+}
+
+[data-testid="stChatMessage"] { background: transparent !important; }
+
+[data-testid="stChatMessage"][data-author="assistant"] {
+    background-image: url("static/burbuja_aria.png") !important;
+    background-size: 100% 100% !important;
+    background-repeat: no-repeat !important;
+    padding: 15px !important;
+}
+
+[data-testid="stChatMessage"][data-author="user"] {
+    background-image: url("static/burbuja_fer.png") !important;
+    background-size: 100% 100% !important;
+    background-repeat: no-repeat !important;
+    padding: 15px !important;
+}
