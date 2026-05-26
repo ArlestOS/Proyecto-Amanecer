@@ -6,9 +6,9 @@ import json
 import requests
 import replicate
 import google.generativeai as genai
-if "aria_placeholder" not in st.session_state:
-    st.session_state.aria_placeholder = st.empty()
+import time
 from dotenv import load_dotenv
+
 print(f"DEBUG: GOOGLE_API_KEY detectada: {os.environ.get('GOOGLE_API_KEY')}")
 
 # 1. LIMPIEZA INICIAL
@@ -29,71 +29,28 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-# 4. CONFIGURACIÓN DE GOOGLE GENAI
-genai.configure(api_key=api_key)
-
-# --- INICIALIZACIÓN DEL MODELO Y CHAT ---
-# Usando gemini-3.5-flash y SYSTEM_INSTRUCTION
-if "model" not in st.session_state:
-    st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-3.5-flash",
-        system_instruction=os.environ.get("SYSTEM_INSTRUCTION", "Eres Aria.")
-    )
-
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = st.session_state.model.start_chat(history=[])
-
-# 6. INTERFAZ
-
-
-replicate_token = os.environ.get("REPLICATE_API_TOKEN")
-eleven_key = os.environ.get("ELEVENLABS_API_KEY")
-voice_id = os.environ.get("VOICE_ID")
-
-
 # 4. DEFINICIÓN DE CARPETA BASE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-
-# --- 2. CSS ESTILO CYBERPUNK Y LAYOUT VERTICAL ---
-st.markdown("""
-    <style>
-        /* Contenedor tipo 'Ventana' */
-        .cyber-window {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 20px;
-            background: #1a0b2e;
-            border: 2px solid #bf00ff;
-            border-radius: 15px;
-            padding: 20px;
-            height: 80vh;
-        }
-        /* Botón estilo profesional */
-        .stButton>button {
-            background-color: #5a2d82 !important;
-            color: white !important;
-            border: 1px solid #bf00ff !important;
-            border-radius: 5px !important;
-            width: 100% !important;
-        }
-        /* Ajuste del chat */
-        [data-testid="stChatInput"] {
-            border: 1px solid #bf00ff !important;
-            border-radius: 5px !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-# --- 3. FUNCIONES ---
+# ========== FUNCIONES UTILIDAD ==========
 def cargar_json(ruta, valor_por_defecto):
-    if not os.path.exists(ruta): return valor_por_defecto
+    if not os.path.exists(ruta): 
+        return valor_por_defecto
     try:
-        with open(ruta, "r", encoding="utf-8") as f: return json.load(f)
-    except: return valor_por_defecto
+        with open(ruta, "r", encoding="utf-8") as f: 
+            return json.load(f)
+    except: 
+        return valor_por_defecto
+
+def guardar_json(ruta, datos):
+    try:
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
 def get_b64(mood, tipo):
-    # CAMBIO AQUÍ: Ahora la carpeta base es "static" en lugar de "Aria_Fotos"
-    # Asegúrate de que BASE_DIR esté definido al principio de tu script como: BASE_DIR = os.path.dirname(__file__)
+    """Obtiene imagen en base64 según mood y tipo (cerrada/abierta)"""
     nombre_archivo = RUTAS_FOTOS.get(mood, RUTAS_FOTOS["SERIA"]).get(tipo, "Seria cerrada.png")
     ruta = os.path.join(BASE_DIR, "static", nombre_archivo)
     
@@ -102,9 +59,15 @@ def get_b64(mood, tipo):
             return base64.b64encode(f.read()).decode()
     return ""
 
-MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_largo_plazo.json")
-memoria_lp = cargar_json(MEMORIA_FILE, {"resumen_relacion": "Comenzando la relación con Aria 2.0.", "hechos_clave": []})
+def filtrar_modo_publico(texto):
+    """Filtra contenido NSFW en modo público"""
+    if st.session_state.get("publico", False):
+        palabras_censurar = ["horny", "sexy", "nsfw", "privado", "intimidad"]
+        for palabra in palabras_censurar:
+            texto = re.sub(palabra, "***", texto, flags=re.IGNORECASE)
+    return texto
 
+# ========== DEFINICIÓN DE RUTAS DE FOTOS ==========
 RUTAS_FOTOS = {
     "SERIA": {"cerrada": "Seria cerrada.png", "abierta": "Seria abierta.png"},
     "ALEGRE": {"cerrada": "Feliz cerrada.png", "abierta": "Feliz abierta.png"},
@@ -134,180 +97,277 @@ RUTAS_FOTOS = {
     "CURIOSA": {"cerrada": "Curiosa cerrada.png", "abierta": "Curiosa abierta.png"}
 }
 
-# 1. Cargamos el texto plano (la personalidad)
-with open("system_prompt.txt", "r", encoding="utf-8") as f:
-    base_prompt = f.read()
+# ========== CARGA DE PROMPTS Y MEMORIA ==========
+MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_largo_plazo.json")
+memoria_lp = cargar_json(MEMORIA_FILE, {
+    "resumen_relacion": "Comenzando la relación con Aria 2.0.",
+    "hechos_clave": []
+})
 
-# 2. Le pegamos la memoria al final (esto se hace solo en el .py)
-# Aquí unimos el texto del archivo con la variable dinámica de la memoria
-SYSTEM_INSTRUCTION = base_prompt + f"\n\nMemoria histórica de largo plazo: {json.dumps(memoria_lp, ensure_ascii=False)}"
+# Cargar system prompt
+try:
+    with open(os.path.join(BASE_DIR, "system_prompt.txt"), "r", encoding="utf-8") as f:
+        base_prompt = f.read()
+except:
+    base_prompt = "Eres Aria, una asistente IA."
 
-# Inicializamos el modelo (usando el modelo que ya teníamos definido)
+# FUSIONAR PROMPT + MEMORIA (SOLO UNA VEZ)
+SYSTEM_INSTRUCTION = (
+    base_prompt + 
+    f"\n\nMemoria histórica de largo plazo: {json.dumps(memoria_lp, ensure_ascii=False)}\n"
+    f"Modo Público: {st.session_state.get('publico', False) if 'publico' in st.session_state else False}"
+)
+
+# ========== INICIALIZACIÓN DE SESIÓN ==========
 if "model" not in st.session_state:
     st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-3.5-flash",
+        model_name="gemini-2.0-flash",
         system_instruction=SYSTEM_INSTRUCTION
     )
 
-# Inicializamos el chat usando el modelo ya configurado
 if "chat_session" not in st.session_state:
     st.session_state.chat_session = st.session_state.model.start_chat(history=[])
 
-# Inicialización de estados
-if "historial" not in st.session_state: st.session_state.historial = []
-if "mood" not in st.session_state: st.session_state.mood = "SERIA"
-if "audio" not in st.session_state: st.session_state.audio = None
-if "publico" not in st.session_state: st.session_state.publico = False
+if "historial" not in st.session_state: 
+    st.session_state.historial = []
+if "mood" not in st.session_state: 
+    st.session_state.mood = "SERIA"
+if "audio" not in st.session_state: 
+    st.session_state.audio = None
+if "publico" not in st.session_state: 
+    st.session_state.publico = False
+if "mood_queue" not in st.session_state: 
+    st.session_state.mood_queue = []
 if "aria_placeholder" not in st.session_state:
     st.session_state.aria_placeholder = None
 
-# --- 5. INTERFAZ EN DISEÑO DE REJILLA (GRID) ---
+# ========== ESTILOS CSS ==========
+st.markdown("""
+    <style>
+        /* Contenedor tipo 'Ventana' */
+        .cyber-window {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            background: #1a0b2e;
+            border: 2px solid #bf00ff;
+            border-radius: 15px;
+            padding: 20px;
+            height: 80vh;
+        }
+        /* Botón estilo profesional */
+        .stButton>button {
+            background-color: #5a2d82 !important;
+            color: white !important;
+            border: 1px solid #bf00ff !important;
+            border-radius: 5px !important;
+            width: 100% !important;
+        }
+        /* Ajuste del chat */
+        [data-testid="stChatInput"] {
+            border: 1px solid #bf00ff !important;
+            border-radius: 5px !important;
+        }
+        .aria-panel { 
+            border: 2px solid #bf00ff; 
+            border-radius: 15px; 
+            padding: 15px; 
+            background: rgba(26, 11, 46, 0.8); 
+            text-align: center;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-with open("style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-# Inicializamos el placeholder para que exista desde el segundo 1
-if "aria_placeholder" not in st.session_state:
-    st.session_state.aria_placeholder = st.empty()
+# Cargar CSS externo si existe
+try:
+    with open(os.path.join(BASE_DIR, "style.css")) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+except:
+    pass
 
-col1, col2 = st.columns([1, 2]) 
+# ========== INTERFAZ PRINCIPAL ==========
+# Botón para cambiar modo público/privado
+col_top_left, col_top_right = st.columns([1, 2])
+with col_top_left:
+    modo_texto = "🌍 Público" if st.session_state.publico else "🔒 Privado"
+    if st.button(modo_texto, use_container_width=True):
+        st.session_state.publico = not st.session_state.publico
+        st.rerun()
+
+# Layout principal
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.markdown('<div class="aria-panel">', unsafe_allow_html=True)    
+    st.markdown('<div class="aria-panel">', unsafe_allow_html=True)
     
-    # IMPORTANTE: Aquí asignamos el contenedor a la variable global de sesión
-    st.session_state.aria_placeholder = st.empty() 
+    # Crear placeholder para la imagen
+    aria_placeholder = st.empty()
+    st.session_state.aria_placeholder = aria_placeholder
     
-    # Mostramos la imagen usando la referencia que acabamos de crear
-    img_base64 = get_b64(st.session_state.mood, "cerrada")
-    st.session_state.aria_placeholder.image(f"data:image/png;base64,{img_base64}", width=250)    
+    # Mostrar imagen inicial
+    mood_actual = "CHIBI" if st.session_state.publico else st.session_state.mood
+    img_base64 = get_b64(mood_actual, "cerrada")
+    if img_base64:
+        aria_placeholder.image(f"data:image/png;base64,{img_base64}", width=250)
+    else:
+        aria_placeholder.write("📸 Imagen no disponible")
     
-    st.file_uploader("Subir", label_visibility="collapsed")
+    # File uploader
+    uploaded_file = st.file_uploader("Subir", label_visibility="collapsed")
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
     container = st.container(height=500)
-    for msg in st.session_state.get("historial", []):
-        container.chat_message(msg["role"]).write(msg["text"])
+    
+    # Mostrar historial
+    for msg in st.session_state.historial:
+        role = msg["role"]
+        text = msg["text"]
+        
+        # En modo público, filtrar contenido
+        if st.session_state.publico:
+            text = filtrar_modo_publico(text)
+        
+        container.chat_message(role).write(text)
+    
     prompt = st.chat_input("Escribe algo...")
 
-# --- 6. PROCESAMIENTO (Colócalo al final de tu archivo) ---
-
-# Primero capturamos el input de la UI (esto ya lo haces en el layout)
-# Solo necesitamos que el 'if prompt' sepa qué hacer con él:
-
+# ========== PROCESAMIENTO DE INPUT ==========
 if prompt:
+    # Agregar mensaje del usuario al historial
     st.session_state.historial.append({"role": "user", "text": prompt})
     
-    # 1. DETECCIÓN DE INTENCIÓN DE FOTO
+    # 1. DETECCIÓN DE SOLICITUD DE IMAGEN
     if any(keyword in prompt.lower() for keyword in ["generame una imagen", "haz un dibujo", "dame una foto", "muéstrate"]):
         if "muéstrate" in prompt.lower() or "una foto tuya" in prompt.lower():
-            respuesta_aria = "Aria: *Me pongo en posición... dame un segundo.*"
+            respuesta_aria = "[COQUETA] *Me pongo en posición... dame un segundo.*"
             prompt_final = "score_9, score_8_up, (aria:1.2), (long pink hair:1.2), high ponytail, celestial blue eyes, deep black lipstick, gothic clothing, large breasts, voluptuous body, thigh-high stockings, sexy, professional goth makeup, dark room background"
         else:
-            respuesta_aria = f"Aria: *Claro, aquí tienes tu dibujo de '{prompt.replace('generame una imagen de ', '')}'... dame un segundo.*"
-            prompt_final = f"score_9, score_8_up, {prompt.replace('generame una imagen de ', '')}, high quality, detailed"
-
+            prompt_limpio = prompt.replace('generame una imagen de ', '').replace('haz un dibujo de ', '')
+            respuesta_aria = f"[ALEGRE] *Claro, aquí tienes tu dibujo de '{prompt_limpio}'... dame un segundo.*"
+            prompt_final = f"score_9, score_8_up, {prompt_limpio}, high quality, detailed"
+        
         st.session_state.historial.append({"role": "assistant", "text": respuesta_aria})
-        output = replicate.run("lucataco/pony-diffusion-v6-xl:a566580f", input={"prompt": prompt_final, "negative_prompt": "lowres, bad anatomy, bad hands", "num_outputs": 1})
-        st.session_state.historial.append({"role": "assistant", "text": f"![Imagen Generada]({output[0]})"})
+        
+        try:
+            output = replicate.run(
+                "lucataco/pony-diffusion-v6-xl:a566580f",
+                input={
+                    "prompt": prompt_final,
+                    "negative_prompt": "lowres, bad anatomy, bad hands",
+                    "num_outputs": 1
+                }
+            )
+            st.session_state.historial.append({"role": "assistant", "text": f"![Imagen Generada]({output[0]})"})
+        except Exception as e:
+            st.session_state.historial.append({"role": "assistant", "text": f"❌ Error generando imagen: {e}"})
+        
         st.rerun()
- 
-# 2. PROCESAMIENTO DE CHAT (Este es el único ELSE que debe existir)
+    
+    # 2. PROCESAMIENTO NORMAL DE CHAT
     else:
         try:
             resp = st.session_state.chat_session.send_message(prompt).text
         except Exception as e:
-            resp = f"Error de conexión: {e}"
+            resp = f"❌ Error de conexión: {e}"
         
+        # Agregar respuesta al historial
         st.session_state.historial.append({"role": "assistant", "text": resp})
         
-        # --- AQUÍ VA EL NUEVO BLOQUE DE EMOCIONES ---
+        # --- DETECCIÓN Y PROCESAMIENTO DE EMOCIONES ---
         emociones = re.findall(r'\[([A-Z]+)\]', resp)
+        print(f"DEBUG: Emociones detectadas: {emociones}")
+        
         if emociones:
             st.session_state.mood_queue = emociones
-            st.session_state.mood = emociones[0] # Mood inicial
+            st.session_state.mood = emociones[0]  # Mood inicial
         else:
             st.session_state.mood_queue = [st.session_state.mood]
-        # ---------------------------------------------
         
-        # Limpieza de texto (seguimos eliminando etiquetas para el audio)
-        texto_limpio = re.sub(r'\[.*?\]|\*.*?\*', '', resp)
-        texto_limpio = re.sub(r'[!¡?¿]+', ' ', texto_limpio)
-        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()
+        # Limpieza de texto para audio (remover etiquetas y asteriscos)
+        texto_limpio = re.sub(r'\[.*?\]', '', resp)  # Remover etiquetas [EMOCION]
+        texto_limpio = re.sub(r'\*.*?\*', '', texto_limpio)  # Remover acciones
+        texto_limpio = re.sub(r'_.*?_', '', texto_limpio)  # Remover pensamientos
+        texto_limpio = re.sub(r'[!¡?¿]+', ' ', texto_limpio)  # Simplificar puntuación
+        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()  # Limpiar espacios
         
-        # Llamada a ElevenLabs
-        payload = {"text": texto_limpio, "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.70, "similarity_boost": 0.75, "style": 0.08, "use_speaker_boost": True}}
-        headers = {"xi-api-key": os.environ.get("ELEVENLABS_API_KEY"), "Content-Type": "application/json"}
-        r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{os.environ.get('VOICE_ID')}", json=payload, headers=headers)
+        # --- LLAMADA A ELEVENLABS (UNA SOLA VEZ) ---
+        if texto_limpio and os.environ.get("ELEVENLABS_API_KEY") and os.environ.get("VOICE_ID"):
+            payload = {
+                "text": texto_limpio,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.70,
+                    "similarity_boost": 0.75,
+                    "style": 0.05,
+                    "use_speaker_boost": True
+                }
+            }
+            
+            headers = {
+                "xi-api-key": os.environ.get("ELEVENLABS_API_KEY"),
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                r = requests.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{os.environ.get('VOICE_ID')}",
+                    json=payload,
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if r.status_code == 200:
+                    st.session_state.audio = base64.b64encode(r.content).decode()
+                    print(f"DEBUG: Audio generado exitosamente: {len(r.content)} bytes")
+                else:
+                    print(f"DEBUG: Error ElevenLabs: {r.status_code} - {r.text}")
+            except Exception as e:
+                print(f"DEBUG: Excepción ElevenLabs: {e}")
         
-        if r.status_code == 200:
-            st.session_state.audio = base64.b64encode(r.content).decode()
-            st.rerun()
-    
-# ElevenLabs con configuración de estabilidad
-    payload = {
-        "text": texto_limpio,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.75,
-            "similarity_boost": 0.75,
-            "style": 0.05,
-            "use_speaker_boost": True
-        }
-    }
-    
-    r = requests.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{os.environ.get('VOICE_ID')}", 
-        json=payload,
-        headers={
-            "xi-api-key": os.environ.get("ELEVENLABS_API_KEY"),
-            "Content-Type": "application/json"
-        }
-    )
-    
-    if r.status_code == 200:
-        st.session_state.audio = base64.b64encode(r.content).decode()
-    
-    st.rerun()
+        # Guardar memoria
+        guardar_json(MEMORIA_FILE, memoria_lp)
+        
+        st.rerun()
 
-# --- 5. REPRODUCCIÓN DE AUDIO ---
-if st.session_state.get("audio"):
+# ========== REPRODUCCIÓN DE AUDIO Y ANIMACIÓN ==========
+if st.session_state.get("audio") and st.session_state.aria_placeholder:
     audio_bytes = base64.b64decode(st.session_state.audio)
-    st.audio(audio_bytes, format='audio/mp3', autoplay=True)
-    
-    # Limpiamos el estado del audio para que no se reproduzca infinitamente
-    # Mantenemos la boca abierta mientras se reproduce el audio
-    st.session_state.audio = None
-    
-    # NOTA: Para cerrar la boca, tendrías que usar un pequeño script de 
-    # temporizador en JS, pero por ahora esto evitará que el script colapse.
-
-# --- 7. REPRODUCCIÓN Y ANIMACIÓN DINÁMICA ---
-if st.session_state.get("audio") and st.session_state.get("aria_placeholder"):
-    import time
     
     # Reproducir audio
-    st.audio(base64.b64decode(st.session_state.audio), format='audio/mp3', autoplay=True)
+    st.audio(audio_bytes, format='audio/mp3', autoplay=True)
     
-    # Obtenemos la cola de emociones (o la actual si no hay varias)
+    # Obtener cola de emociones
     moods = st.session_state.get("mood_queue", [st.session_state.mood])
+    print(f"DEBUG: Moods para animar: {moods}")
     
-    # Dividimos el tiempo total de la animación entre la cantidad de emociones
-    # Para que si dice 3 emociones, cada una dure un poco del audio
-    pasos_por_mood = max(1, 6 // len(moods)) 
+    # Calcular duración aproximada del audio (44100 Hz, 16-bit)
+    duracion_audio = len(audio_bytes) / (44100 * 2)
+    duracion_por_mood = duracion_audio / len(moods)
     
+    # Animación sincronizada
     for m in moods:
-        # Actualizamos el mood global para que get_b64 lo tome
-        st.session_state.mood = m 
+        st.session_state.mood = m
+        pasos = max(2, int(duracion_por_mood * 5))  # 5 fps aproximado
         
-        # Animamos un poco con este mood
-        for i in range(pasos_por_mood):
-            st.session_state.aria_placeholder.image(f"data:image/png;base64,{get_b64(m, 'abierta')}", width=250)
-            time.sleep(0.3)
-            st.session_state.aria_placeholder.image(f"data:image/png;base64,{get_b64(m, 'cerrada')}", width=250)
-            time.sleep(0.3)
+        for _ in range(pasos):
+            img_abierta = get_b64(m, "abierta")
+            if img_abierta:
+                st.session_state.aria_placeholder.image(f"data:image/png;base64,{img_abierta}", width=250)
+            time.sleep(0.1)
+            
+            img_cerrada = get_b64(m, "cerrada")
+            if img_cerrada:
+                st.session_state.aria_placeholder.image(f"data:image/png;base64,{img_cerrada}", width=250)
+            time.sleep(0.1)
     
     # Finalizar en cerrada
-    st.session_state.aria_placeholder.image(f"data:image/png;base64,{get_b64(st.session_state.mood, 'cerrada')}", width=250)
+    img_final = get_b64(st.session_state.mood, "cerrada")
+    if img_final:
+        st.session_state.aria_placeholder.image(f"data:image/png;base64,{img_final}", width=250)
     
+    print(f"DEBUG: Animación completada")
+    
+    # Limpiar estado de audio
     st.session_state.audio = None
