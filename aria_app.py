@@ -7,7 +7,10 @@ import requests
 import replicate
 import google.generativeai as genai
 from supabase import create_client
+from datetime import datetime
+from PIL import Image
 import time
+
 from dotenv import load_dotenv
 
 print(f"DEBUG: GOOGLE_API_KEY detectada: {os.environ.get('GOOGLE_API_KEY')}")
@@ -133,6 +136,25 @@ def guardar_memoria(memoria):
         print("ERROR GUARDANDO:", e)
 
 
+def extraer_recuerdo(prompt):
+    trigger_palabras = [
+        "recuerda que",
+        "mi ciudad es",
+        "vivo en",
+        "me gusta",
+        "mi color favorito es",
+        "mi número favorito es"
+    ]
+
+    texto = prompt.lower()
+
+    for trigger in trigger_palabras:
+        if trigger in texto:
+            return prompt
+
+    return None
+
+
 memoria_lp = cargar_memoria()
 # Cargar system prompt
 try:
@@ -142,21 +164,33 @@ except:
     base_prompt = "Eres Aria, una asistente IA."
 
 # FUSIONAR PROMPT + MEMORIA (SOLO UNA VEZ)
-SYSTEM_INSTRUCTION = (
-    base_prompt + 
-    f"\n\nMemoria histórica de largo plazo: {json.dumps(memoria_lp, ensure_ascii=False)}\n"
-    f"Modo Público: {st.session_state.get('publico', False) if 'publico' in st.session_state else False}"
-)
+def construir_system_instruction():
 
-# ========== INICIALIZACIÓN DE SESIÓN ==========
-if "model" not in st.session_state:
-    st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=SYSTEM_INSTRUCTION
+    recuerdos = "\n".join(
+        [f"- {r}" for r in memoria_lp.get("hechos_clave", [])]
     )
 
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = st.session_state.model.start_chat(history=[])
+    hora_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    return (
+        base_prompt +
+        "\n\n=== MEMORIA DE FER ===\n" +
+        recuerdos +
+        "\n=======================\n" +
+        f"\nFecha y hora actual: {hora_actual}\n" +
+        f"\nModo Público: {st.session_state.get('publico', False)}\n" +
+        "\nTienes permitido usar búsqueda web para obtener información actualizada cuando sea necesario."
+    )
+
+# ========== INICIALIZACIÓN DE SESIÓN ==========
+st.session_state.model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash",
+    system_instruction=construir_system_instruction()
+)
+
+st.session_state.chat_session = st.session_state.model.start_chat(
+    history=[]
+)
 
 if "historial" not in st.session_state: 
     st.session_state.historial = []
@@ -262,9 +296,25 @@ with col2:
         container.chat_message(role).write(text)
     
     prompt = st.chat_input("Escribe algo...")
+    imagen_subida = None
 
+prompt = st.chat_input("Escribe algo...")
+
+imagen_subida = None
+
+if uploaded_file is not None:
+    imagen_subida = Image.open(uploaded_file)
 # ========== PROCESAMIENTO DE INPUT ==========
 if prompt:
+    recuerdo = extraer_recuerdo(prompt)
+
+    if recuerdo:
+        memoria_lp["hechos_clave"].append(recuerdo)
+
+        guardar_memoria(memoria_lp)
+        print(memoria_lp)
+
+        print("MEMORIA GUARDADA:", recuerdo)
     # Agregar mensaje del usuario al historial
     st.session_state.historial.append({"role": "user", "text": prompt})
     
@@ -298,9 +348,24 @@ if prompt:
     # 2. PROCESAMIENTO NORMAL DE CHAT
     else:
         try:
-            resp = st.session_state.chat_session.send_message(prompt).text
-        except Exception as e:
-            resp = f"❌ Error de conexión: {e}"
+
+    if imagen_subida:
+
+        response = st.session_state.chat_session.send_message(
+            [prompt, imagen_subida]
+        )
+
+    else:
+
+        response = st.session_state.chat_session.send_message(
+            prompt,
+            tools="google_search"
+        )
+
+    resp = response.text
+
+except Exception as e:
+    resp = f"❌ Error de conexión: {e}"
         
         # Agregar respuesta al historial
         st.session_state.historial.append({"role": "assistant", "text": resp})
@@ -329,8 +394,8 @@ if prompt:
                 "model_id": "eleven_multilingual_v2",
                 "voice_settings": {
                     "stability": 0.40,
-                    "similarity_boost": 0.75,
-                    "style": 0.35,
+                    "similarity_boost": 0.65,
+                    "style": 0.4,
                     "use_speaker_boost": True
                 }
             }
@@ -379,13 +444,13 @@ if st.session_state.get("audio") and st.session_state.aria_placeholder:
     # Animación sincronizada
     for m in moods:
         st.session_state.mood = m
-        pasos = max(2, int(duracion_por_mood * 5))  # 5 fps aproximado
+        pasos = 2
         
         for _ in range(pasos):
             img_abierta = get_b64(m, "abierta")
             if img_abierta:
                 st.session_state.aria_placeholder.image(f"data:image/png;base64,{img_abierta}", width=250)
-            time.sleep(0.1)
+            time.sleep(0.03)
             
             img_cerrada = get_b64(m, "cerrada")
             if img_cerrada:
