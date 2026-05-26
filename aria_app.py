@@ -298,9 +298,9 @@ if prompt:
                 "text": texto_limpio,
                 "model_id": "eleven_multilingual_v2",
                 "voice_settings": {
-                    "stability": 0.70,
+                    "stability": 0.40,
                     "similarity_boost": 0.75,
-                    "style": 0.05,
+                    "style": 0.35,
                     "use_speaker_boost": True
                 }
             }
