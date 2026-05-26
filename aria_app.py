@@ -6,6 +6,7 @@ import json
 import requests
 import replicate
 import google.generativeai as genai
+from supabase import create_client
 import time
 from dotenv import load_dotenv
 
@@ -28,6 +29,11 @@ if not api_key:
     st.stop()
 
 genai.configure(api_key=api_key)
+# ========= SUPABASE =========
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_KEY")
+
+supabase = create_client(supabase_url, supabase_key)
 
 # 4. DEFINICIÓN DE CARPETA BASE
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -98,12 +104,36 @@ RUTAS_FOTOS = {
 }
 
 # ========== CARGA DE PROMPTS Y MEMORIA ==========
-MEMORIA_FILE = os.path.join(BASE_DIR, "memoria_largo_plazo.json")
-memoria_lp = cargar_json(MEMORIA_FILE, {
-    "resumen_relacion": "Comenzando la relación con Aria 2.0.",
-    "hechos_clave": []
-})
+# ========= MEMORIA SUPABASE =========
 
+def cargar_memoria():
+    try:
+        response = supabase.table("memoria").select("*").eq("user_id", "fer").execute()
+
+        if response.data:
+            return response.data[0]["contenido"]
+
+    except Exception as e:
+        print("ERROR MEMORIA:", e)
+
+    return {
+        "resumen_relacion": "Comenzando la relación con Aria 2.0.",
+        "hechos_clave": []
+    }
+
+
+def guardar_memoria(memoria):
+    try:
+        supabase.table("memoria").upsert({
+            "user_id": "fer",
+            "contenido": memoria
+        }).execute()
+
+    except Exception as e:
+        print("ERROR GUARDANDO:", e)
+
+
+memoria_lp = cargar_memoria()
 # Cargar system prompt
 try:
     with open(os.path.join(BASE_DIR, "system_prompt.txt"), "r", encoding="utf-8") as f:
@@ -327,7 +357,7 @@ if prompt:
                 print(f"DEBUG: Excepción ElevenLabs: {e}")
         
         # Guardar memoria
-        guardar_json(MEMORIA_FILE, memoria_lp)
+        guardar_memoria(memoria_lp)
         
         st.rerun()
 
