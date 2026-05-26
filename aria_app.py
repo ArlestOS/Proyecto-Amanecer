@@ -298,10 +298,6 @@ with col2:
     prompt = st.chat_input("Escribe algo...")
     imagen_subida = None
 
-prompt = st.chat_input("Escribe algo...")
-
-imagen_subida = None
-
 if uploaded_file is not None:
     imagen_subida = Image.open(uploaded_file)
 # ========== PROCESAMIENTO DE INPUT ==========
@@ -345,50 +341,59 @@ if prompt:
         
         st.rerun()
     
-    # 2. PROCESAMIENTO NORMAL DE CHAT
+# 2. PROCESAMIENTO NORMAL DE CHAT
     else:
+
         try:
 
-    if imagen_subida:
+            if imagen_subida:
 
-        response = st.session_state.chat_session.send_message(
-            [prompt, imagen_subida]
-        )
+                response = st.session_state.chat_session.send_message(
+                    [prompt, imagen_subida]
+                )
 
-    else:
+            else:
 
-        response = st.session_state.chat_session.send_message(
-            prompt,
-            tools="google_search"
-        )
+                response = st.session_state.chat_session.send_message(
+                    prompt,
+                    tools="google_search"
+                )
 
-    resp = response.text
+            try:
+                resp = response.text
 
-except Exception as e:
-    resp = f"❌ Error de conexión: {e}"
-        
+            except:
+                resp = str(response.candidates[0].content.parts[0])
+
+        except Exception as e:
+            resp = f"❌ Error de conexión: {e}"
+
         # Agregar respuesta al historial
-        st.session_state.historial.append({"role": "assistant", "text": resp})
-        
+        st.session_state.historial.append({
+            "role": "assistant",
+            "text": resp
+        })
+
         # --- DETECCIÓN Y PROCESAMIENTO DE EMOCIONES ---
         emociones = re.findall(r'\[([A-Z]+)\]', resp)
         print(f"DEBUG: Emociones detectadas: {emociones}")
-        
+
         if emociones:
             st.session_state.mood_queue = emociones
-            st.session_state.mood = emociones[0]  # Mood inicial
+            st.session_state.mood = emociones[0]
         else:
             st.session_state.mood_queue = [st.session_state.mood]
-        
-        # Limpieza de texto para audio (remover etiquetas y asteriscos)
-        texto_limpio = re.sub(r'\[.*?\]', '', resp)  # Remover etiquetas [EMOCION]
-        texto_limpio = re.sub(r'\*.*?\*', '', texto_limpio)  # Remover acciones
-        texto_limpio = re.sub(r'_.*?_', '', texto_limpio)  # Remover pensamientos
-        texto_limpio = re.sub(r'[!¡?¿]+', ' ', texto_limpio)  # Simplificar puntuación
-        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()  # Limpiar espacios
-        
-        # --- LLAMADA A ELEVENLABS (UNA SOLA VEZ) ---
+
+        # Limpieza de texto para audio
+        texto_limpio = re.sub(r'\[.*?\]', '', resp)
+        texto_limpio = re.sub(r'\*.*?\*', '', texto_limpio)
+        texto_limpio = re.sub(r'_.*?_', '', texto_limpio)
+        texto_limpio = re.sub(r'[!¡?¿]+', ' ', texto_limpio)
+        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()
+
+        # --- ELEVENLABS ---
         if texto_limpio and os.environ.get("ELEVENLABS_API_KEY") and os.environ.get("VOICE_ID"):
+
             payload = {
                 "text": texto_limpio,
                 "model_id": "eleven_multilingual_v2",
@@ -399,31 +404,34 @@ except Exception as e:
                     "use_speaker_boost": True
                 }
             }
-            
+
             headers = {
                 "xi-api-key": os.environ.get("ELEVENLABS_API_KEY"),
                 "Content-Type": "application/json"
             }
-            
+
             try:
+
                 r = requests.post(
                     f"https://api.elevenlabs.io/v1/text-to-speech/{os.environ.get('VOICE_ID')}",
                     json=payload,
                     headers=headers,
                     timeout=10
                 )
-                
+
                 if r.status_code == 200:
                     st.session_state.audio = base64.b64encode(r.content).decode()
                     print(f"DEBUG: Audio generado exitosamente: {len(r.content)} bytes")
+
                 else:
                     print(f"DEBUG: Error ElevenLabs: {r.status_code} - {r.text}")
+
             except Exception as e:
                 print(f"DEBUG: Excepción ElevenLabs: {e}")
-        
+
         # Guardar memoria
         guardar_memoria(memoria_lp)
-        
+
         st.rerun()
 
 # ========== REPRODUCCIÓN DE AUDIO Y ANIMACIÓN ==========
