@@ -121,7 +121,7 @@ SYSTEM_INSTRUCTION = (
 # ========== INICIALIZACIÓN DE SESIÓN ==========
 if "model" not in st.session_state:
     st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=SYSTEM_INSTRUCTION
     )
 
