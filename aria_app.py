@@ -6,6 +6,7 @@ import json
 import requests
 import replicate
 import google.generativeai as genai
+from google.generativeai.types import Tool
 from supabase import create_client
 from datetime import datetime
 from PIL import Image
@@ -163,14 +164,15 @@ try:
 except:
     base_prompt = "Eres Aria, una asistente IA."
 
-# FUSIONAR PROMPT + MEMORIA (SOLO UNA VEZ)
-def construir_system_instruction():
+# ========== INICIALIZACIÓN DE SESIÓN ==========
 
+# Función para obtener el system prompt actualizado (hora en tiempo real)
+def get_current_system_instruction():
+    hora_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
+    
     recuerdos = "\n".join(
         [f"- {r}" for r in memoria_lp.get("hechos_clave", [])]
     )
-
-    hora_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     return (
         base_prompt +
@@ -182,15 +184,16 @@ def construir_system_instruction():
         "\nTienes permitido usar búsqueda web para obtener información actualizada cuando sea necesario."
     )
 
-# ========== INICIALIZACIÓN DE SESIÓN ==========
+# Configuración del modelo con búsqueda web
+tools = [{"google_search_retrieval": {}}]
+
 st.session_state.model = genai.GenerativeModel(
     model_name="gemini-2.5-flash",
-    system_instruction=construir_system_instruction()
+    system_instruction=get_current_system_instruction(),
+    tools=tools
 )
 
-st.session_state.chat_session = st.session_state.model.start_chat(
-    history=[]
-)
+st.session_state.chat_session = st.session_state.model.start_chat(history=[])
 
 if "historial" not in st.session_state: 
     st.session_state.historial = []
@@ -342,26 +345,20 @@ if prompt:
         st.rerun()
     
 # 2. PROCESAMIENTO NORMAL DE CHAT
-    else:
-
-        try:
-
-            if imagen_subida:
-
-                response = st.session_state.chat_session.send_message(
-                    [prompt, imagen_subida]
-                )
-
             else:
-
-                response = st.session_state.chat_session.send_message(
-                    prompt,
-                    tools="google_search"
+                # Actualizamos el system prompt con la hora actual y herramientas de búsqueda
+                st.session_state.model = genai.GenerativeModel(
+                    model_name="gemini-2.5-flash",
+                    system_instruction=get_current_system_instruction(),
+                    tools=[{"google_search_retrieval": {}}]
                 )
-
-            try:
-                resp = response.text
-
+                
+                # Reiniciamos la sesión manteniendo el historial anterior
+                st.session_state.chat_session = st.session_state.model.start_chat(
+                    history=st.session_state.chat_session.history
+                )
+                
+                response = st.session_state.chat_session.send_message(prompt)
             except:
                 resp = str(response.candidates[0].content.parts[0])
 
